@@ -202,10 +202,10 @@ NOTE: Change ${NODE_NAME} and ${NODE_IP} the same infor on node
           retry_timeout: 10
           maximum_lag_on_failover: 1048576
           slots:
-            logicreplia:
+            replica:
                 database: postgres
                 plugin: pgoutput
-                type: logical
+                type: phisycal
           postgresql:
               use_pg_rewind: true
               use_slots: true
