@@ -83,6 +83,8 @@
 
 
     dnf install https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm -y
+    dnf install postgresql16-server postgresql-contrib postgresql16-devel -y
+    yum install https://download.postgresql.org/pub/repos/yum/16/redhat/rhel-9-x86_64/system_stats_16-3.2-1PGDG.rhel9.x86_64.rpm
     
     dnf install postgresql16-server postgresql-contrib -y
     
@@ -128,12 +130,15 @@
     ETCD_SNAPSHOT_COUNT="10000"
     ETCD_WAL_DIR="/var/lib/etcd/wal"
     ETCD_ENABLE_V2="true"
+
+    ETCD_HEARTBEAT_INTERVAL="200"
+    ETCD_ELECTION_TIMEOUT="2000"
+    ETCD_LOGGER="zap"
+    ETCD_QUOTA_BACKEND_BYTES="8589934592"
+
     
     EOF
     }
-
-
-
 
     cat <<EOF >/etc/systemd/system/etcd.service
     [Unit]
@@ -197,52 +202,66 @@ NOTE: Change ${NODE_NAME} and ${NODE_IP} the same infor on node
     bootstrap:
       # this section will be written into Etcd:/<namespace>/<scope>/config after initializing new cluster
       dcs:
-          ttl: 30
-          loop_wait: 10
-          retry_timeout: 10
-          maximum_lag_on_failover: 1048576
-          slots:
-            logicreplia:
-              database: postgres
-              plugin: pgoutput
-              type: physical
-          postgresql:
-              use_pg_rewind: true
-              use_slots: true
-              parameters:
-                  wal_level: replica
-                  hot_standby: "on"
-                  wal_keep_segments: 10
-                  max_wal_senders: 5
-                  max_replication_slots: 10
-                  wal_log_hints: "on"
-                  logging_collector: 'on'
-    
+         ttl: 30
+         loop_wait: 10
+         retry_timeout: 10
+         maximum_lag_on_failover: 1048576
+         slots:
+           replica:
+             database: postgres
+         plugin: pgoutput
+         type: phisycal
+         method: pgbackrest
+         pgbackrest:
+             keep_existing_recovery_conf: False
+             no_params: False
+         postgresql:
+             use_pg_rewind: true
+             use_slots: true
+             remove_data_directory_on_rewind_failure: true
+             parameters:
+                 archive_mode: "on"
+                 archive_command: "pgbackrest --stanza=cluster_1 archive-push %p"
+                 wal_level: replica
+                 hot_standby: "on"
+                 wal_keep_segments: 10
+                 max_wal_senders: 10
+                 max_replication_slots: 10
+                 wal_log_hints: "on"
+                 logging_collector: 'on'
+                 autovacuum_max_workers: 5
+                 autovacuum_naptime: 30
+                 autovacuum_vacuum_threshold: 50
+                 autovacuum_vacuum_scale_factor: 0.05
+                 autovacuum_analyze_threshold: 50
+                 autovacuum_analyze_scale_factor: 0.02
+                 autovacuum_freeze_max_age: 50000000
+                 autovacuum_vacuum_cost_limit: 1000
+                 autovacuum_vacuum_cost_delay: 1
+                 shared_preload_libraries: "pg_stat_statements"
+                 pg_stat_statements.max: 10000
+                 pg_stat_statements.track: all
+                 system_stats.track_activities: true
+                 work_mem: 512MB
+                 temp_buffers: 256MB
+                 log_min_duration_statement: 1000
+                 log_temp_files: 0
+                #recovery_conf:
+                #recovery_target_timeline: latest
+                #restore_command: pgbackrest --config=/etc/pgbackrest.conf --stanza=cluster_1 archive-get %f %p
+
       # some desired options for 'initdb'
       initdb: # Note: It needs to be a list (some options need values, others are switches)
           - encoding: UTF8
           - data-checksums
-    
       pg_hba: # Add following lines to pg_hba.conf after running 'initdb'
           - host replication replicator 127.0.0.1/32 trust
-          - host replication replicator   10.84.2.40/0   md5
-          - host replication replicator   10.84.2.41/0   md5
-          - host replication replicator   10.84.2.42/0   md5
+          - host replication replicator   10.84.2.40/32   trust
+          - host replication replicator   10.84.2.41/32   trust
+          - host replication replicator   10.84.2.42/32   trust
           - host all all 0.0.0.0/0 md5
     
-      # Some additional users which needs to be created after initializing new cluster
-      users:
-          admin:
-              password: qaz123
-              options:
-                  - createrole
-                  - createdb
-          percona:
-              password: qaz123
-              options:
-                  - createrole
-                  - createdb 
-    
+      # Some additional users which needs to be created after initializing new cluster 
     postgresql:
         cluster_name: cluster_1
         listen: 0.0.0.0:5432
@@ -259,16 +278,53 @@ NOTE: Change ${NODE_NAME} and ${NODE_IP} the same infor on node
                 password: qaz123
         parameters:
             unix_socket_directories: "/var/run/postgresql/"
+            logging_collector: 'on'
+            autovacuum_max_workers: 5
+            autovacuum_naptime: 30
+            autovacuum_vacuum_threshold: 50
+            autovacuum_vacuum_scale_factor: 0.05
+            autovacuum_analyze_threshold: 50
+            autovacuum_analyze_scale_factor: 0.02
+            autovacuum_freeze_max_age: 50000000
+            autovacuum_vacuum_cost_limit: 1000
+           autovacuum_vacuum_cost_delay: 1
+           work_mem: 512MB
+           temp_buffers: 256MB
+           log_min_duration_statement: 1000
+           log_temp_files: 0
+           unix_socket_directories: "/var/run/postgresql/"
         create_replica_methods:
+            - pgbackrest
             - basebackup
+        pgbackrest:
+           #command: pgbackrest --stanza=cluster_1 restore --delta --link -all
+             keep_data: True
+             no_params: True
         basebackup:
             checkpoint: 'fast'
-    
+    watchdog:
+        mode: off 
     tags:
         nofailover: false
         noloadbalance: false
         clonefrom: false
         nosync: false
+    logging:
+        level: INFO
+        format: '%(asctime)s - %(levelname)s - %(message)s'
+        loggers:
+            root:
+                handlers: [file]
+                level: INFO
+        handlers:
+            file:
+                class: logging.FileHandler
+                level: INFO
+                formatter: default
+                filename: /var/log/patroni/patroni.log
+        formatters:
+            default:
+                format: '%(asctime)s - %(levelname)s - %(message)s'
     " | sudo tee -a /etc/patroni/patroni.yml
 
 #### Create patroni data directory on node1,node2 and node3:
@@ -307,6 +363,9 @@ NOTE: Change ${NODE_NAME} and ${NODE_IP} the same infor on node
     
     # Do not restart the service if it crashes, we want to manually inspect database on failure
     Restart=no 
+
+    StandardOutput=file:/var/log/patroni/patroni.log
+    StandardError=file:/var/log/patroni/patroni.log
     
     [Install]
     WantedBy=multi-user.target
