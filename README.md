@@ -332,6 +332,10 @@ NOTE: Change ${NODE_NAME} and ${NODE_IP} the same infor on node
     mkdir -p  /data/patroni
     chown postgres:postgres /data/patroni/
     chmod 700 /data/patroni/
+    mkdir -p /var/log/patroni
+    touch /var/log/patroni/patroni.log
+    chown postgres:postgres /var/log/patroni/patroni.log
+    chmod 640 /var/log/patroni/patroni.log
 
 #### Create systemd file for patroni on node1,node2,node3:
 
