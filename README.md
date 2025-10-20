@@ -83,8 +83,8 @@
 
 
     dnf install https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm -y
-    dnf install postgresql16-server postgresql-contrib postgresql16-devel -y
-    yum install https://download.postgresql.org/pub/repos/yum/16/redhat/rhel-9-x86_64/system_stats_16-3.2-1PGDG.rhel9.x86_64.rpm
+    dnf install postgresql17-server postgresql-contrib postgresql17-devel -y
+    yum install https://download.postgresql.org/pub/repos/yum/17/redhat/rhel-9-x86_64/system_stats_17-3.2-1PGDG.rhel9.x86_64.rpm
     
     dnf install postgresql16-server postgresql-contrib -y
     
@@ -679,6 +679,85 @@ NOTE: Change ${NODE_NAME} and ${NODE_IP} the same infor on node
 
     psql -U postgres -d db_name < /tmp/db_name.dump
 
+##### Khôi phục từ repo1-retention expire(đảm bảo toàn  bộ repo1 trên pgBackRest đã được copy sang NAS, tape, Netbackup, ...)
 
+- Dựng 1 repo riêng để khôi phục từ bản backup cũ
+
+
+    mkdir -p /restore-repo
+
+- copy các file  backup từ NAS, tape, Netbackup, ... về thư mục vừa tạo /restore-repo
+- Tạo 1 file config mới cho pgBackRest trên pgbackrest
+
+    chown -R pgbackrest: /restore-repo
+
+
+    vim /etc/pgbackrest-restore.conf
+    [global]
+    repo1-retention-full=7
+    repo1-retention-diff=2
+    repo1-retention-archive-type=full
+    start-fast=y
+    process-max=4
+    log-level-console=info
+    log-level-file=debug
+    archive-timeout=300
+    spool-path=/var/spool/pgbackrest
+    
+    
+    
+    [d-pav]
+    repo1-path=/restore-repo
+    pg1-path=/data/pgsql-17/data/
+    pg1-host=x.x.x.x
+    
+    repo1-retention-full=7
+    repo1-retention-diff=2
+
+    chown -R pgbackrest: /etc/pgbackrest-restore.conf
+
+- Liệt kê các bạn backup từ restore-repo
+    
+
+    sudo -u pgbackrest pgbackrest --stanza=d-pav --log-level-console=info --config=/etc/pgbackrest-restore.conf info
+
+- Tạo 1 file config mới cho pgBackRest trên postgresql
+
+
+    vim /etc/pgbackrest-restore.conf
+    [global]
+    repo1-path=/restore-repo
+    log-level-console=info
+    log-level-file=debug
+    
+    [d-pav]
+    pg1-path=/postgresql17/main/
+
+- Liệt kê backup file
+
+
+    sudo -u postgres pgbackrest --stanza=p-airbyte --config=/etc/pgbackrest-restore.conf info
+
+#### Cách 2
+-   trên pgbackrest server khai báo thêm repo thứ 2 vào trực tiếp file pgbackrest.conf
+
+
+    [global]
+    repo1-path=/data/pgbackrest/d-pav
+    repo2-path=/restore-repo
+
+- Trên máy chủ postgresql khai báo thêm repo 2 trong file pgbackrest.conf
+
+    
+    [d-pav]
+    repo2-host=p-backup-db
+    repo2-host-user=pgbackrest
+- Liệt kê backup file
+
+
+    sudo -u postgres pgbackrest --stanza=d-pav --repo=2 info
+    sudo -u postgres pgbackrest --stanza=d-pav --repo=1 info
+
+### Restore tương tự ở trên
 
         
